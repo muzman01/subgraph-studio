@@ -1,5 +1,5 @@
 /* eslint-disable prefer-const */
-import { BigInt, BigDecimal, ethereum } from "@graphprotocol/graph-ts";
+import { BigInt, BigDecimal, ethereum, log } from "@graphprotocol/graph-ts";
 import { Transaction } from "../generated/schema";
 import { ONE_BI, ZERO_BI, ZERO_BD, ONE_BD } from "./constants";
 
@@ -19,7 +19,14 @@ export function safeDiv(amount0: BigDecimal, amount1: BigDecimal): BigDecimal {
     return amount0.div(amount1);
   }
 }
-
+// return 0 if denominator is 0 in division
+export function safeDivInt(amount0: BigInt, amount1: BigInt): BigInt {
+  if (amount1.equals(ZERO_BI)) {
+    return ZERO_BI;
+  } else {
+    return amount0.div(amount1);
+  }
+}
 export function bigDecimalExponated(value: BigDecimal, power: BigInt): BigDecimal {
   if (power.equals(ZERO_BI)) {
     return ONE_BD;
@@ -82,13 +89,18 @@ export function convertEthToDecimal(eth: BigInt): BigDecimal {
 
 export function loadTransaction(event: ethereum.Event): Transaction {
   let transaction = Transaction.load(event.transaction.hash.toHexString());
-  transaction = transaction ? transaction : new Transaction("");
   if (transaction === null) {
     transaction = new Transaction(event.transaction.hash.toHexString());
-    transaction = transaction ? transaction : new Transaction("");
   }
+  log.debug("Loading transaction receipt: {}", [event.transaction.hash.toHexString()]);
   transaction.blockNumber = event.block.number;
   transaction.timestamp = event.block.timestamp;
+  log.debug("Loading transaction receipt: {}", [event.transaction.hash.toHexString()]);
+
+  // event.receipt ve event.receipt.gasUsed alanlarını kontrol edin
+
+  transaction.gasUsed = ONE_BI;
+
   transaction.gasPrice = event.transaction.gasPrice;
   transaction.save();
   return transaction as Transaction;

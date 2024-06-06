@@ -136,6 +136,10 @@ export function handleMint(event: MintEvent): void {
   pool.liquidityProviderCount = pool.liquidityProviderCount.plus(ONE_BI);
 
   let transaction = loadTransaction(event);
+  if (transaction === null) {
+    log.warning("Transaction is null for mint event: {}", [event.transaction.hash.toHexString()]);
+    return;
+  }
   let mint = new Mint(transaction.id.toString() + "#" + pool.txCount.toString());
   mint.transaction = transaction.id;
   mint.timestamp = transaction.timestamp;
@@ -262,6 +266,10 @@ export function handleBurn(event: BurnEvent): void {
   }
 
   let transaction = loadTransaction(event);
+  if (transaction === null) {
+    log.warning("Transaction is null for increase liquidity event: {}", [event.transaction.hash.toHexString()]);
+    return;
+  }
   let burn = new Burn(transaction.id + "#" + pool.txCount.toString());
   burn.transaction = transaction.id;
   burn.timestamp = transaction.timestamp;
@@ -311,128 +319,82 @@ export function handleBurn(event: BurnEvent): void {
 }
 
 export function handleSwap(event: SwapEvent): void {
-  log.info("handleSwap fonksiyonu başlatıldı", []);
-
   let bundle = Bundle.load("1");
   let factory = Factory.load(FACTORY_ADDRESS);
   let pool = Pool.load(event.address.toHexString());
 
-  if (!bundle) {
-    log.error("Bundle bulunamadı", []);
+  if (bundle === null || factory === null || pool === null) {
+    log.warning("Bundle, factory, or pool is null. Bundle: {}, Factory: {}, Pool: {}", [
+      bundle ? "not null" : "null",
+      factory ? "not null" : "null",
+      pool ? "not null" : "null",
+    ]);
     return;
   }
-  if (!factory) {
-    log.error("Factory bulunamadı", []);
-    return;
-  }
-  if (!pool) {
-    log.error("Pool bulunamadı: {}", [event.address.toHexString()]);
-    return;
-  }
-
-  log.info("Başlangıç verileri yüklendi: bundle = {}, factory = {}, pool = {}", [bundle.id, factory.id, pool.id]);
 
   let token0 = Token.load(pool.token0);
   let token1 = Token.load(pool.token1);
 
-  if (!token0) {
-    log.error("Token0 bulunamadı: {}", [pool.token0]);
+  if (token0 === null || token1 === null) {
+    log.warning("Token0 or Token1 is null. Token0: {}, Token1: {}", [
+      token0 ? "not null" : "null",
+      token1 ? "not null" : "null",
+    ]);
     return;
   }
-  if (!token1) {
-    log.error("Token1 bulunamadı: {}", [pool.token1]);
-    return;
-  }
-
-  log.info("Token verileri yüklendi: token0 = {}, token1 = {}", [token0.symbol, token1.symbol]);
 
   let oldTick = pool.tick;
-  if (!oldTick) {
-    log.error("Eski tick bulunamadı", []);
+
+  if (oldTick === null) {
+    log.warning("Old tick is null for pool: {}", [pool.id]);
     return;
   }
 
-  log.info("Eski tick yüklendi: {}", [oldTick.toString()]);
-
-  // amounts - 0/1 are token deltas: can be positive or negative
   let amount0 = convertTokenToDecimal(event.params.amount0, token0.decimals);
   let amount1 = convertTokenToDecimal(event.params.amount1, token1.decimals);
   let protocolFeeAmount0 = convertTokenToDecimal(event.params.protocolFeesToken0, token0.decimals);
   let protocolFeeAmount1 = convertTokenToDecimal(event.params.protocolFeesToken1, token1.decimals);
 
-  log.info(
-    "Miktarlar desimale çevrildi: amount0 = {}, amount1 = {}, protocolFeeAmount0 = {}, protocolFeeAmount1 = {}",
-    [amount0.toString(), amount1.toString(), protocolFeeAmount0.toString(), protocolFeeAmount1.toString()]
-  );
+  log.debug("amount0: {}", [amount0.toString()]);
+  log.debug("amount1: {}", [amount1.toString()]);
+  log.debug("protocolFeeAmount0: {}", [protocolFeeAmount0.toString()]);
+  log.debug("protocolFeeAmount1: {}", [protocolFeeAmount1.toString()]);
 
-  // need absolute amounts for volume
   let amount0Abs = amount0.times(BigDecimal.fromString(amount0.lt(ZERO_BD) ? "-1" : "1"));
   let amount1Abs = amount1.times(BigDecimal.fromString(amount1.lt(ZERO_BD) ? "-1" : "1"));
-  let volumeAmounts: AmountType = getAdjustedAmounts(amount0Abs, token0 as Token, amount1Abs, token1 as Token);
+  
+  log.debug("amount0Abs: {}", [amount0Abs.toString()]);
+  log.debug("amount1Abs: {}", [amount1Abs.toString()]);
 
-  log.info(
-    "Mutlak miktarlar ve hacim hesaplandı: amount0Abs = {}, amount1Abs = {}, volumeAmounts = [eth = {}, usd = {}, usdUntracked = {}]",
-    [
-      amount0Abs.toString(),
-      amount1Abs.toString(),
-      volumeAmounts.eth.toString(),
-      volumeAmounts.usd.toString(),
-      volumeAmounts.usdUntracked.toString(),
-    ]
-  );
+  let volumeAmounts: AmountType = getAdjustedAmounts(amount0Abs, token0, amount1Abs, token1);
+  log.debug("volumeAmounts.eth: {}", [volumeAmounts.eth.toString()]);
+  log.debug("volumeAmounts.usd: {}", [volumeAmounts.usd.toString()]);
+  log.debug("volumeAmounts.usdUntracked: {}", [volumeAmounts.usdUntracked.toString()]);
 
-  const oneMillion = BigDecimal.fromString("1000000.0");
+  if (volumeAmounts.usd.equals(ZERO_BD)) {
+    log.warning("Volume amounts USD is zero for transaction: {}", [event.transaction.hash.toHexString()]);
+  }
+
   let volumeETH = volumeAmounts.eth.div(TWO_BD);
   let volumeUSD = volumeAmounts.usd.div(TWO_BD);
   let volumeUSDUntracked = volumeAmounts.usdUntracked.div(TWO_BD);
 
-  log.info("Hacim ETH ve USD olarak hesaplandı: volumeETH = {}, volumeUSD = {}, volumeUSDUntracked = {}", [
-    volumeETH.toString(),
-    volumeUSD.toString(),
-    volumeUSDUntracked.toString(),
-  ]);
+  log.debug("volumeETH: {}", [volumeETH.toString()]);
+  log.debug("volumeUSD: {}", [volumeUSD.toString()]);
+  log.debug("volumeUSDUntracked: {}", [volumeUSDUntracked.toString()]);
 
-  let protocolFeeAmounts: AmountType = getAdjustedAmounts(
-    protocolFeeAmount0,
-    token0 as Token,
-    protocolFeeAmount1,
-    token1 as Token
-  );
+  let protocolFeeAmounts: AmountType = getAdjustedAmounts(protocolFeeAmount0, token0, protocolFeeAmount1, token1);
+  log.debug("protocolFeeAmounts.eth: {}", [protocolFeeAmounts.eth.toString()]);
+  log.debug("protocolFeeAmounts.usd: {}", [protocolFeeAmounts.usd.toString()]);
 
-  log.info("Protokol ücret miktarları hesaplandı: protocolFeeAmounts = [eth = {}, usd = {}, usdUntracked = {}]", [
-    protocolFeeAmounts.eth.toString(),
-    protocolFeeAmounts.usd.toString(),
-    protocolFeeAmounts.usdUntracked.toString(),
-  ]);
-
-  let feesETH = BigDecimal.fromString("0");
-  let feesUSD = BigDecimal.fromString("0");
-
-  if (!oneMillion.equals(ZERO_BD)) {
-    log.info("Bölme işlemi için gerekli değerler: volumeETH = {}, pool.feeTier = {}, oneMillion = {}", [
-      volumeETH.toString(),
-      pool.feeTier.toBigDecimal().toString(),
-      oneMillion.toString(),
-    ]);
-
-    if (!volumeETH.equals(ZERO_BD) && !pool.feeTier.toBigDecimal().equals(ZERO_BD) && !volumeUSD.equals(ZERO_BD)) {
-      feesETH = volumeETH.times(pool.feeTier.toBigDecimal()).div(oneMillion);
-      feesUSD = volumeUSD.times(pool.feeTier.toBigDecimal()).div(oneMillion);
-
-      log.info("Ücretler hesaplandı: feesETH = {}, feesUSD = {}", [feesETH.toString(), feesUSD.toString()]);
-    } else {
-      log.error("Hatalı değerler: volumeETH = {}, volumeUSD = {}, pool.feeTier = {}", [
-        volumeETH.toString(),
-        volumeUSD.toString(),
-        pool.feeTier.toBigDecimal().toString(),
-      ]);
-      return;
-    }
-  }
-
+  let feesETH = volumeETH.times(pool.feeTier.toBigDecimal()).div(BigDecimal.fromString("1000000"));
+  let feesUSD = volumeUSD.times(pool.feeTier.toBigDecimal()).div(BigDecimal.fromString("1000000"));
   let feesProtocolETH = protocolFeeAmounts.eth;
 
-  // global updates
+  log.debug("feesETH: {}", [feesETH.toString()]);
+  log.debug("feesUSD: {}", [feesUSD.toString()]);
+  log.debug("feesProtocolETH: {}", [feesProtocolETH.toString()]);
+
   factory.txCount = factory.txCount.plus(ONE_BI);
   factory.totalVolumeETH = factory.totalVolumeETH.plus(volumeETH);
   factory.totalVolumeUSD = factory.totalVolumeUSD.plus(volumeUSD);
@@ -442,18 +404,6 @@ export function handleSwap(event: SwapEvent): void {
   factory.totalProtocolFeesETH = factory.totalProtocolFeesETH.plus(feesProtocolETH);
   factory.totalProtocolFeesUSD = factory.totalProtocolFeesUSD.plus(protocolFeeAmounts.usd);
 
-  log.info(
-    "Factory global güncellemeleri tamamlandı: txCount = {}, totalVolumeETH = {}, totalVolumeUSD = {}, totalFeesETH = {}, totalFeesUSD = {}",
-    [
-      factory.txCount.toString(),
-      factory.totalVolumeETH.toString(),
-      factory.totalVolumeUSD.toString(),
-      factory.totalFeesETH.toString(),
-      factory.totalFeesUSD.toString(),
-    ]
-  );
-
-  // pool volume
   pool.volumeToken0 = pool.volumeToken0.plus(amount0Abs);
   pool.volumeToken1 = pool.volumeToken1.plus(amount1Abs);
   pool.volumeUSD = pool.volumeUSD.plus(volumeUSD);
@@ -462,31 +412,10 @@ export function handleSwap(event: SwapEvent): void {
   pool.protocolFeesUSD = pool.protocolFeesUSD.plus(protocolFeeAmounts.usd);
   pool.txCount = pool.txCount.plus(ONE_BI);
 
-  log.info(
-    "Havuz hacmi güncellemeleri tamamlandı: volumeToken0 = {}, volumeToken1 = {}, volumeUSD = {}, untrackedVolumeUSD = {}, feesUSD = {}, protocolFeesUSD = {}, txCount = {}",
-    [
-      pool.volumeToken0.toString(),
-      pool.volumeToken1.toString(),
-      pool.volumeUSD.toString(),
-      pool.untrackedVolumeUSD.toString(),
-      pool.feesUSD.toString(),
-      pool.protocolFeesUSD.toString(),
-      pool.txCount.toString(),
-    ]
-  );
-
-  // Update the pool with the new active liquidity, price, and tick.
   pool.liquidity = event.params.liquidity;
   pool.tick = BigInt.fromI32(event.params.tick as i32);
   pool.sqrtPrice = event.params.sqrtPriceX96;
 
-  log.info("Havuz likiditesi, tick ve sqrtPrice güncellendi: liquidity = {}, tick = {}, sqrtPrice = {}", [
-    pool.liquidity.toString(),
-    pool.tick!.toString(), // pool.tick null olamayacağını belirtiyoruz
-    pool.sqrtPrice.toString(),
-  ]);
-
-  // update token0 data
   token0.volume = token0.volume.plus(amount0Abs);
   token0.volumeUSD = token0.volumeUSD.plus(volumeUSD);
   token0.untrackedVolumeUSD = token0.untrackedVolumeUSD.plus(volumeUSDUntracked);
@@ -494,7 +423,6 @@ export function handleSwap(event: SwapEvent): void {
   token0.protocolFeesUSD = token0.protocolFeesUSD.plus(protocolFeeAmounts.usd);
   token0.txCount = token0.txCount.plus(ONE_BI);
 
-  // update token1 data
   token1.volume = token1.volume.plus(amount1Abs);
   token1.volumeUSD = token1.volumeUSD.plus(volumeUSD);
   token1.untrackedVolumeUSD = token1.untrackedVolumeUSD.plus(volumeUSDUntracked);
@@ -502,64 +430,26 @@ export function handleSwap(event: SwapEvent): void {
   token1.protocolFeesUSD = token1.protocolFeesUSD.plus(protocolFeeAmounts.usd);
   token1.txCount = token1.txCount.plus(ONE_BI);
 
-  log.info("Token verileri güncellendi: token0.volume = {}, token1.volume = {}", [
-    token0.volume.toString(),
-    token1.volume.toString(),
-  ]);
-
-  // updated pool rates
-  let prices = sqrtPriceX96ToTokenPrices(pool.sqrtPrice, token0 as Token, token1 as Token);
+  let prices = sqrtPriceX96ToTokenPrices(pool.sqrtPrice, token0, token1);
   pool.token0Price = prices[0];
   pool.token1Price = prices[1];
   pool.save();
 
-  log.info("Havuz fiyatları güncellendi: token0Price = {}, token1Price = {}", [
-    pool.token0Price.toString(),
-    pool.token1Price.toString(),
-  ]);
-
-  // update USD pricing
   bundle.ethPriceUSD = getEthPriceInUSD();
-  log.info("Güncellenmiş ETH Fiyatı: {}", [bundle.ethPriceUSD.toString()]);
   bundle.save();
-  token0.derivedETH = findEthPerToken(token0 as Token);
-  token1.derivedETH = findEthPerToken(token1 as Token);
+  token0.derivedETH = findEthPerToken(token0);
+  token1.derivedETH = findEthPerToken(token1);
   token0.derivedUSD = token0.derivedETH.times(bundle.ethPriceUSD);
   token1.derivedUSD = token1.derivedETH.times(bundle.ethPriceUSD);
 
-  log.info("USD fiyatlandırması güncellendi: ethPriceUSD = {}, token0.derivedUSD = {}, token1.derivedUSD = {}", [
-    bundle.ethPriceUSD.toString(),
-    token0.derivedUSD.toString(),
-    token1.derivedUSD.toString(),
-  ]);
-
-  // Update TVL values.
   let oldPoolTVLETH = pool.totalValueLockedETH;
   let oldPoolTVLETHUntracked = pool.totalValueLockedETHUntracked;
   pool.totalValueLockedToken0 = pool.totalValueLockedToken0.plus(amount0);
   pool.totalValueLockedToken1 = pool.totalValueLockedToken1.plus(amount1);
   token0.totalValueLocked = token0.totalValueLocked.plus(amount0);
   token1.totalValueLocked = token1.totalValueLocked.plus(amount1);
-  updateDerivedTVLAmounts(
-    pool as Pool,
-    factory as Factory,
-    token0 as Token,
-    token1 as Token,
-    oldPoolTVLETH,
-    oldPoolTVLETHUntracked
-  );
+  updateDerivedTVLAmounts(pool, factory, token0, token1, oldPoolTVLETH, oldPoolTVLETHUntracked);
 
-  log.info(
-    "TVL değerleri güncellendi: pool.totalValueLockedToken0 = {}, pool.totalValueLockedToken1 = {}, token0.totalValueLocked = {}, token1.totalValueLocked = {}",
-    [
-      pool.totalValueLockedToken0.toString(),
-      pool.totalValueLockedToken1.toString(),
-      token0.totalValueLocked.toString(),
-      token1.totalValueLocked.toString(),
-    ]
-  );
-
-  // create Swap event
   let transaction = loadTransaction(event);
   let swap = new Swap(transaction.id + "#" + pool.txCount.toString());
   swap.transaction = transaction.id;
@@ -578,43 +468,20 @@ export function handleSwap(event: SwapEvent): void {
   swap.sqrtPriceX96 = event.params.sqrtPriceX96;
   swap.logIndex = event.logIndex;
 
-  log.info("Swap olayı oluşturuldu: swap.id = {}", [swap.id]);
-
-  // update fee growth
   let poolContract = PoolABI.bind(event.address);
   let feeGrowthGlobal0X128 = poolContract.feeGrowthGlobal0X128();
   let feeGrowthGlobal1X128 = poolContract.feeGrowthGlobal1X128();
   pool.feeGrowthGlobal0X128 = feeGrowthGlobal0X128 as BigInt;
   pool.feeGrowthGlobal1X128 = feeGrowthGlobal1X128 as BigInt;
 
-  log.info("Ücret büyümesi güncellendi: feeGrowthGlobal0X128 = {}, feeGrowthGlobal1X128 = {}", [
-    pool.feeGrowthGlobal0X128.toString(),
-    pool.feeGrowthGlobal1X128.toString(),
-  ]);
-
-  // interval data
   let pancakeDayData = updatePancakeDayData(event);
   let poolDayData = updatePoolDayData(event);
   let poolHourData = updatePoolHourData(event);
-  let token0DayData = updateTokenDayData(token0 as Token, event);
-  let token1DayData = updateTokenDayData(token1 as Token, event);
-  let token0HourData = updateTokenHourData(token0 as Token, event);
-  let token1HourData = updateTokenHourData(token1 as Token, event);
+  let token0DayData = updateTokenDayData(token0, event);
+  let token1DayData = updateTokenDayData(token1, event);
+  let token0HourData = updateTokenHourData(token0, event);
+  let token1HourData = updateTokenHourData(token1, event);
 
-  log.info(
-    "Zaman aralığı verileri güncellendi: pancakeDayData = {}, poolDayData = {}, poolHourData = {}, token0DayData = {}, token1DayData = {}, token0HourData = {}, token1HourData = {}",
-    [
-      pancakeDayData.id,
-      poolDayData.id,
-      poolHourData.id,
-      token0DayData.id,
-      token1DayData.id,
-      token0HourData.id,
-      token1HourData.id,
-    ]
-  );
-
-  // update volume metrics
   pancakeDayData.volumeETH = pancakeDayData.volumeETH.plus(volumeETH);
   pancakeDayData.volumeUSD = pancakeDayData.volumeUSD.plus(volumeUSD);
   pancakeDayData.feesUSD = pancakeDayData.feesUSD.plus(feesUSD);
@@ -656,17 +523,6 @@ export function handleSwap(event: SwapEvent): void {
   token1HourData.feesUSD = token1HourData.feesUSD.plus(feesUSD);
   token1HourData.protocolFeesUSD = token1HourData.protocolFeesUSD.plus(protocolFeeAmounts.usd);
 
-  log.info(
-    "Hacim metrikleri güncellendi: pancakeDayData.volumeUSD = {}, poolDayData.volumeUSD = {}, poolHourData.volumeUSD = {}, token0DayData.volumeUSD = {}, token1DayData.volumeUSD = {}",
-    [
-      pancakeDayData.volumeUSD.toString(),
-      poolDayData.volumeUSD.toString(),
-      poolHourData.volumeUSD.toString(),
-      token0DayData.volumeUSD.toString(),
-      token1DayData.volumeUSD.toString(),
-    ]
-  );
-
   swap.save();
   factory.save();
   pancakeDayData.save();
@@ -680,49 +536,35 @@ export function handleSwap(event: SwapEvent): void {
   token0.save();
   token1.save();
 
-  log.info("Tüm veriler kaydedildi", []);
+  let newTick = pool.tick;
+  if (newTick === null) {
+    log.warning("New tick is null for pool: {}", [pool.id]);
+    return;
+  }
 
-  // Update inner vars of current or crossed ticks
-  let newTick = pool.tick!;
   let tickSpacing = feeTierToTickSpacing(pool.feeTier);
   let modulo = newTick.mod(tickSpacing);
   if (modulo.equals(ZERO_BI)) {
-    // Current tick is initialized and needs to be updated
     loadTickUpdateFeeVarsAndSave(newTick.toI32(), event);
   }
 
-  log.info("Güncel tick güncellemesi kontrol edildi: newTick = {}, tickSpacing = {}", [
-    newTick.toString(),
-    tickSpacing.toString(),
-  ]);
-
   let numIters = oldTick.minus(newTick).abs().div(tickSpacing);
 
-  log.info("Tick sayısı hesaplandı: numIters = {}", [numIters.toString()]);
-
   if (numIters.gt(BigInt.fromI32(100))) {
-    log.info("100'den fazla tick güncellenecek, güncelleme atlanıyor", []);
-    // In case more than 100 ticks need to be updated ignore the update in
-    // order to avoid timeouts. From testing this behavior occurs only upon
-    // pool initialization. This should not be a big issue as the ticks get
-    // updated later. For early users this error also disappears when calling
-    // collect
+    return;
   } else if (newTick.gt(oldTick)) {
     let firstInitialized = oldTick.plus(tickSpacing.minus(modulo));
     for (let i = firstInitialized; i.le(newTick); i = i.plus(tickSpacing)) {
       loadTickUpdateFeeVarsAndSave(i.toI32(), event);
-      log.info("Tick güncellendi: {}", [i.toString()]);
     }
   } else if (newTick.lt(oldTick)) {
     let firstInitialized = oldTick.minus(modulo);
     for (let i = firstInitialized; i.ge(newTick); i = i.minus(tickSpacing)) {
       loadTickUpdateFeeVarsAndSave(i.toI32(), event);
-      log.info("Tick güncellendi: {}", [i.toString()]);
     }
   }
-
-  log.info("handleSwap fonksiyonu tamamlandı", []);
 }
+
 
 export function handleFlash(event: FlashEvent): void {
   let pool = Pool.load(event.address.toHexString());
@@ -791,7 +633,10 @@ export function handleCollect(event: CollectEvent): void {
   }
 
   let transaction = loadTransaction(event);
-
+  if (transaction === null) {
+    log.warning("Transaction is null for increase liquidity event: {}", [event.transaction.hash.toHexString()]);
+    return;
+  }
   let amount0 = convertTokenToDecimal(event.params.amount0, token0.decimals);
   let amount1 = convertTokenToDecimal(event.params.amount1, token1.decimals);
   let amounts: AmountType = getAdjustedAmounts(amount0, token0, amount1, token1);

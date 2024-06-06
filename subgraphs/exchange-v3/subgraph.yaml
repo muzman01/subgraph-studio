@@ -1,5 +1,5 @@
 specVersion: 0.0.4
-description: PancakeSwap is a multi-chain decentralized exchange and automated market maker protocol.
+description: SquadSwap is a multi-chain decentralized exchange and automated market maker protocol.
 repository: https://github.com/pancakeswap/pancake-subgraph
 schema:
   file: ./schema.graphql
