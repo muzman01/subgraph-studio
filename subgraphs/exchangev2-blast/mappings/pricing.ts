@@ -1,11 +1,10 @@
-/* eslint-disable prefer-const */
 import { BigDecimal, Address, log } from "@graphprotocol/graph-ts/index";
 import { Pair, Token, Bundle } from "../generated/schema";
 import { ZERO_BD, factoryContract, ADDRESS_ZERO, ONE_BD } from "./utils";
 
-let WBNB_ADDRESS = "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c";
-let BUSD_WBNB_PAIR = "0x58f876857a02d6762e0101bb5c46a8c1ed44dc16"; // created block 589414
-let USDT_WBNB_PAIR = "0x6a1856a891e139c4a73189dda3baf7d65393a283"; // created block 648115
+let WBNB_ADDRESS = "0x4200000000000000000000000000000000000023";
+let BUSD_WBNB_PAIR = "0xdb92fa868b6fcac503201895d39d57944cc1fa23"; // created block 589414
+let USDT_WBNB_PAIR = "0xdb92fa868b6fcac503201895d39d57944cc1fa23"; // created block 648115
 
 export function getBnbPriceInUSD(): BigDecimal {
   // fetch eth prices for each stablecoin
@@ -32,15 +31,10 @@ export function getBnbPriceInUSD(): BigDecimal {
 
 // token where amounts should contribute to tracked volume and liquidity
 let WHITELIST: string[] = [
-  "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c", // WBNB
-  "0xe9e7cea3dedca5984780bafc599bd69add087d56", // BUSD
-  "0x55d398326f99059ff775485246999027b3197955", // USDT
-  "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", // USDC
-  "0x23396cf899ca06c4472205fc903bdb4de249d6fc", // UST
-  "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c", // BTCB
-  "0x2170ed0880ac9a755fd29b2688956bd959f933f8", // WETH
-  "0xba2ae424d960c26247dd6c32edc70B295c744c43", // DOGE
-  "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82", // CAKE
+  "0x4200000000000000000000000000000000000023", // WBNB
+  "0x4200000000000000000000000000000000000022", // USDB
+  "0xc4f417f390a39895ba09090a8a43c38dd696b183"
+
 ];
 
 // minimum liquidity for price to get tracked
@@ -59,25 +53,19 @@ export function findBnbPerToken(token: Token): BigDecimal {
     let pairAddress = factoryContract.getPair(Address.fromString(token.id), Address.fromString(WHITELIST[i]));
     if (pairAddress.toHex() != ADDRESS_ZERO) {
       let pair = Pair.load(pairAddress.toHex());
-      if (pair === null) {
-        log.error("Pair not found for address: {}", [pairAddress.toHex()]);
-        return ZERO_BD;
-      }
-      if (pair.token0 == token.id && pair.reserveBNB.gt(MINIMUM_LIQUIDITY_THRESHOLD_BNB)) {
-        let token1 = Token.load(pair.token1);
-        if (token1 === null) {
-          log.error("Token not found for address: {}", [pair.token1]);
-          return ZERO_BD;
+      if (pair !== null) {
+        if (pair.token0 == token.id && pair.reserveBNB.gt(MINIMUM_LIQUIDITY_THRESHOLD_BNB)) {
+          let token1 = Token.load(pair.token1);
+          if (token1 !== null && token1.derivedBNB !== null) {
+            return pair.token1Price.times(token1.derivedBNB);
+          }
         }
-        return pair.token1Price.times(token1.derivedBNB as BigDecimal); // return token1 per our token * BNB per token 1
-      }
-      if (pair.token1 == token.id && pair.reserveBNB.gt(MINIMUM_LIQUIDITY_THRESHOLD_BNB)) {
-        let token0 = Token.load(pair.token0);
-        if (token0 === null) {
-          log.error("Token not found for address: {}", [pair.token0]);
-          return ZERO_BD;
+        if (pair.token1 == token.id && pair.reserveBNB.gt(MINIMUM_LIQUIDITY_THRESHOLD_BNB)) {
+          let token0 = Token.load(pair.token0);
+          if (token0 !== null && token0.derivedBNB !== null) {
+            return pair.token0Price.times(token0.derivedBNB);
+          }
         }
-        return pair.token0Price.times(token0.derivedBNB as BigDecimal); // return token0 per our token * BNB per token 0
       }
     }
   }
@@ -97,44 +85,41 @@ export function getTrackedVolumeUSD(
   tokenAmount1: BigDecimal,
   token1: Token
 ): BigDecimal {
-  let price0 = token0.derivedBNB.times(bundle.bnbPrice);
-  let price1 = token1.derivedBNB.times(bundle.bnbPrice);
-
+  let price0 = token0.derivedBNB !== null ? token0.derivedBNB.times(bundle.bnbPrice) : ZERO_BD;
+  let price1 = token1.derivedBNB !== null ? token1.derivedBNB.times(bundle.bnbPrice) : ZERO_BD;
   // both are whitelist tokens, take average of both amounts
   if (WHITELIST.includes(token0.id) && WHITELIST.includes(token1.id)) {
     log.warning(
-      "Total volume: Both tokens are on the whitelist, amounts included in the calculation: token0: {}, amount0: {}, token1: {}, amount1: {}",
+      "Total likidite: Both tokens are on the whitelist, amounts included in the calculation: token0: {}, amount0: {}, token1: {}, amount1: {}",
       [token0.id, tokenAmount0.toString(), token1.id, tokenAmount1.toString()]
     );
-    return tokenAmount0.times(price0).plus(tokenAmount1.times(price1)).div(BigDecimal.fromString("2"));
+    return tokenAmount0.times(price0).plus(tokenAmount1.times(price1));
   }
 
-  // take full value of the whitelisted token amount
+  // take double value of the whitelisted token amount
   if (WHITELIST.includes(token0.id) && !WHITELIST.includes(token1.id)) {
-    log.warning("Total volume: Token0 is on the whitelist, amount included in the calculation: {}, amount: {}", [
+    log.warning("Total likidite: Token0 is on the whitelist, amount included in the calculation: {}, amount: {}", [
       token0.id,
       tokenAmount0.toString(),
     ]);
-    return tokenAmount0.times(price0);
+    return tokenAmount0.times(price0).times(BigDecimal.fromString("2"));
   }
 
-  // take full value of the whitelisted token amount
+  // take double value of the whitelisted token amount
   if (!WHITELIST.includes(token0.id) && WHITELIST.includes(token1.id)) {
-    log.warning("Total volume: Token1 is on the whitelist, amount included in the calculation: {}, amount: {}", [
+    log.warning("Total likidite: Token1 is on the whitelist, amount included in the calculation: {}, amount: {}", [
       token1.id,
       tokenAmount1.toString(),
     ]);
-    return tokenAmount1.times(price1);
+    return tokenAmount1.times(price1).times(BigDecimal.fromString("2"));
   }
-
-  // neither token is on white list, tracked volume is 0
   log.warning(
-    "Total volume: Neither token is on the whitelist, amounts not included in the calculation: token0: {}, amount0: {}, token1: {}, amount1: {}",
+    "Total likidite: Neither token is on the whitelist, amounts not included in the calculation: token0: {}, amount0: {}, token1: {}, amount1: {}",
     [token0.id, tokenAmount0.toString(), token1.id, tokenAmount1.toString()]
   );
-  return ZERO_BD;
+  // neither token is on white list, tracked volume is 0
+  return tokenAmount0.times(price0).plus(tokenAmount1.times(price1));
 }
-
 /**
  * Accepts tokens and amounts, return tracked fee amount based on token whitelist
  * If both are, return the difference between the token amounts
@@ -147,8 +132,8 @@ export function getTrackedFeeVolumeUSD(
   tokenAmount1: BigDecimal,
   token1: Token
 ): BigDecimal {
-  let price0 = token0.derivedBNB.times(bundle.bnbPrice);
-  let price1 = token1.derivedBNB.times(bundle.bnbPrice);
+  let price0 = token0.derivedBNB !== null ? token0.derivedBNB.times(bundle.bnbPrice) : ZERO_BD;
+  let price1 = token1.derivedBNB !== null ? token1.derivedBNB.times(bundle.bnbPrice) : ZERO_BD;
 
   // both are whitelist tokens, take average of both amounts
   if (WHITELIST.includes(token0.id) && WHITELIST.includes(token1.id)) {
@@ -178,8 +163,8 @@ export function getTrackedLiquidityUSD(
   tokenAmount1: BigDecimal,
   token1: Token
 ): BigDecimal {
-  let price0 = token0.derivedBNB.times(bundle.bnbPrice);
-  let price1 = token1.derivedBNB.times(bundle.bnbPrice);
+  let price0 = token0.derivedBNB !== null ? token0.derivedBNB.times(bundle.bnbPrice) : ZERO_BD;
+  let price1 = token1.derivedBNB !== null ? token1.derivedBNB.times(bundle.bnbPrice) : ZERO_BD;
 
   // both are whitelist tokens, take average of both amounts
   if (WHITELIST.includes(token0.id) && WHITELIST.includes(token1.id)) {

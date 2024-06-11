@@ -1,17 +1,12 @@
 /* eslint-disable prefer-const */
 import { PairHourData } from "../generated/schema";
-import { BigInt, BigDecimal, ethereum, log } from "@graphprotocol/graph-ts";
+import { BigInt, BigDecimal, ethereum } from "@graphprotocol/graph-ts";
 import { Pair, Bundle, Token, PancakeFactory, PancakeDayData, PairDayData, TokenDayData } from "../generated/schema";
 import { ONE_BI, ZERO_BD, ZERO_BI, FACTORY_ADDRESS } from "./utils";
 
 export function updatePancakeDayData(event: ethereum.Event): PancakeDayData {
   let pancake = PancakeFactory.load(FACTORY_ADDRESS);
-  if (pancake === null) {
-    pancake = new PancakeFactory(FACTORY_ADDRESS);
-    pancake.totalLiquidityUSD = ZERO_BD;
-    pancake.totalLiquidityBNB = ZERO_BD;
-    pancake.totalTransactions = ZERO_BI;
-  }
+  pancake = pancake ? pancake : new PancakeFactory("");
   let timestamp = event.block.timestamp.toI32();
   let dayID = timestamp / 86400;
   let dayStartTimestamp = dayID * 86400;
@@ -31,11 +26,6 @@ export function updatePancakeDayData(event: ethereum.Event): PancakeDayData {
   pancakeDayData.totalLiquidityBNB = pancake.totalLiquidityBNB;
   pancakeDayData.totalTransactions = pancake.totalTransactions;
   pancakeDayData.save();
-  log.info("PancakeDayData updated: {}, {},{}", [
-    pancakeDayData.id,
-    pancake.totalLiquidityUSD.toString(),
-    pancake.totalLiquidityBNB.toString(),
-  ]);
 
   return pancakeDayData as PancakeDayData;
 }
